@@ -1,0 +1,9 @@
+streamlit
+python-dotenv
+supabase
+google-genai
+langchain
+langchain-google-genai
+python-docx
+pdfplumber
+langchain-text-splitters

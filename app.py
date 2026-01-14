@@ -5,6 +5,7 @@ import os
 from dotenv import load_dotenv
 from google import genai
 from supabase import create_client
+import speech_recognition as sr  # <-- new import for STT
 
 # ---------------- ENV ----------------
 load_dotenv()
@@ -17,69 +18,145 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(page_title="RAG Chatbot", layout="wide", page_icon="🤖")
 
+
+# ---------------- THEME & STYLING ----------------
 # ---------------- THEME & STYLING ----------------
 st.markdown("""
 <style>
-/* Main Background */
-.stApp {
-    background-color: #FFFFFF;
-    color: #333333;
+/* ---------------- GENERAL SETTINGS ---------------- */
+@import url('https://fonts.googleapis.com/css2?family=Header:wght@400;600&family=Inter:wght@400;500;600&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif;
+    background-color: #000000; 
+    color: #FFFFFF;
 }
 
-/* Sidebar */
-[data-testid="stSidebar"] {
-    background-color: #F7F7F8;
-    border-right: 1px solid #ECECEC;
-}
-
-/* Chat Input styling - Simple Light */
-.stChatInputContainer textarea {
-    background-color: #FFFFFF !important;
-    color: #333333 !important;
-    border: 1px solid #E5E5E5 !important;
-    border-radius: 12px !important;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
-}
-
-/* Scrollbar styling */
-::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-::-webkit-scrollbar-track {
-    background: #FFFFFF; 
-}
-::-webkit-scrollbar-thumb {
-    background: #D1D5DB; 
-    border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-    background: #9CA3AF; 
-}
-
-/* Buttons in sidebar */
-.stButton button {
-    background-color: transparent;
-    color: #333333;
-    border: 1px solid #E5E5E5;
-    border-radius: 6px;
-    transition: all 0.2s ease;
-    width: 100%;
-    text-align: left;
-    padding-left: 10px;
-}
-.stButton button:hover {
-    background-color: #E5E5E5;
-    border-color: #D1D5DB;
-    color: #000;
-}
-
-/* Remove default main menu and footer for immersion */
+/* Hiding Streamlit Branding */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
+header {visibility: hidden;}
+
+/* ---------------- SIDEBAR ---------------- */
+[data-testid="stSidebar"] {
+    background-color: #050505; /* Almost black */
+    border-right: 1px solid #1F1F1F;
+}
+
+[data-testid="stSidebar"] h1 {
+    font-family: 'Inter', sans-serif;
+    font-weight: 600;
+    color: #FFFFFF;
+    font-size: 1.5rem;
+    margin-bottom: 1rem;
+}
+
+[data-testid="stSidebar"] .stButton button {
+    width: 100%;
+    text-align: left;
+    background-color: transparent;
+    color: #E0E0E0;
+    border: 1px solid #333333;
+    padding: 0.6rem 1rem;
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.2s ease-in-out;
+}
+
+[data-testid="stSidebar"] .stButton button:hover {
+    background-color: #1A1A1A;
+    color: #FFFFFF;
+    border-color: #58A6FF;
+    transform: translateX(2px);
+}
+
+/* ---------------- CHAT INTERFACE ---------------- */
+
+/* Input Container */
+.stChatInputContainer {
+    padding-bottom: 2rem;
+    background-color: #000000;
+}
+
+.stChatInputContainer textarea {
+    background-color: #0A0A0A !important; 
+    color: #FFFFFF !important;
+    border: 1px solid #333333 !important;
+    border-radius: 12px !important;
+    padding: 14px !important;
+    font-size: 1rem;
+    box-shadow: none;
+}
+
+.stChatInputContainer textarea:focus {
+    border-color: #58A6FF !important;
+    outline: none !important;
+    box-shadow: 0 0 0 1px rgba(88, 166, 255, 0.5);
+    background-color: #111111 !important;
+}
+
+/* ---------------- BUTTONS & ELEMENTS ---------------- */
+.stButton button {
+    border-radius: 8px;
+    font-weight: 600;
+    background-color: #0E0E0E;
+    color: #FFF;
+    border: 1px solid #333;
+}
+.stButton button:hover {
+    background-color: #1F1F1F;
+    border-color: #555;
+}
+
+/* Spinner */
+.stSpinner > div {
+    border-top-color: #FFFFFF !important;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: #000000;
+}
+::-webkit-scrollbar-thumb {
+    background: #333333;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #555555;
+}
+
+/* Welcome Message Styling */
+.welcome-container {
+    text-align: center;
+    margin-top: 25vh;
+    padding: 2rem;
+    animation: fadeIn 1.2s ease-in-out;
+}
+.welcome-title {
+    font-size: 3rem;
+    color: #FFFFFF;
+    font-weight: 800;
+    letter-spacing: -1px;
+    margin-bottom: 0.5rem;
+}
+.welcome-subtitle {
+    font-size: 1.1rem;
+    color: #666666;
+    font-weight: 400;
+}
+
+@keyframes fadeIn {
+    0% { opacity: 0; transform: translateY(10px); }
+    100% { opacity: 1; transform: translateY(0); }
+}
 
 </style>
 """, unsafe_allow_html=True)
+
 
 # ---------------- SESSION ----------------
 if "chat_id" not in st.session_state: st.session_state.chat_id = None
@@ -127,7 +204,7 @@ def fetch_similar_docs(query, chat_id):
         res = supabase.rpc("match_documents", {
             "query_embedding": q_emb,
             "match_count": 5,
-            "match_threshold": 0.3, # Lowered to capture more relevant context
+            "match_threshold": 0.3,
             "chat_id_filter": chat_id
         }).execute()
     except Exception:
@@ -160,6 +237,20 @@ def rag_answer(question, history, chat_id):
     res = client.models.generate_content(model="gemini-3-flash-preview", contents=prompt)
     return res.text
 
+# ---------------- SPEECH-TO-TEXT FUNCTION ----------------
+def speech_to_text():
+    recognizer = sr.Recognizer()
+    with sr.Microphone() as source:
+        st.info("🎤 Listening... Please speak now.")
+        recognizer.adjust_for_ambient_noise(source)
+        audio = recognizer.listen(source)
+    try:
+        return recognizer.recognize_google(audio)
+    except sr.UnknownValueError:
+        return "Sorry, I could not understand your speech."
+    except sr.RequestError:
+        return "Could not request results from Google Speech Recognition."
+
 # ---------------- SIDEBAR ----------------
 with st.sidebar:
     st.title("Chatbot")
@@ -174,7 +265,6 @@ with st.sidebar:
     chats = load_chats()
     for chat in chats:
         cols = st.columns([0.85, 0.15])
-        # Using a unique key for buttons
         if cols[0].button(chat["title"] or "Untitled", key=f"select_{chat['id']}"):
             st.session_state.chat_id = chat["id"]
             st.session_state.messages = load_messages(chat["id"])
@@ -191,14 +281,7 @@ with st.sidebar:
         if not st.session_state.chat_id:
             st.session_state.chat_id = create_new_chat()
             st.session_state.messages = []
-        
-        # Process and save if new
-        # Note: A smarter way is to check if we already processed this file in this session, 
-        # but for now we'll just process it when it appears. 
-        # To avoid re-processing on every rerun, we can check a session state flag or just let the user know.
-        # Ideally, we'd clear the uploader after success, but Streamlit makes that tricky without a form.
-        # We will just process and show a toast.
-        
+
         text = ""
         if uploaded_file.type == "text/plain":
             text = uploaded_file.read().decode("utf-8")
@@ -211,9 +294,6 @@ with st.sidebar:
             doc = docx.Document(uploaded_file)
             text = "\n".join([p.text for p in doc.paragraphs])
         
-        # Simple check to avoid spamming the DB on every rerun if the file sits there
-        # For this demo, we'll assume the user removes it or ignores the re-upload logic, 
-        # OR we can store the last_uploaded_filename in session_state.
         if "last_uploaded" not in st.session_state or st.session_state.last_uploaded != uploaded_file.name:
              save_document(text, st.session_state.chat_id)
              doc_msg = f"📄 Uploaded: {uploaded_file.name}"
@@ -222,13 +302,31 @@ with st.sidebar:
              st.session_state.last_uploaded = uploaded_file.name
              st.success("File processed!")
 
+    # ---------------- Speech-to-Text Button ----------------
+    st.markdown("🎤 **Or speak your question:**")
+    if st.button("Speak"):
+        if not st.session_state.chat_id:
+            st.session_state.chat_id = create_new_chat()
+        user_query = speech_to_text()
+        st.session_state.messages.append({"role": "user", "content": user_query})
+
+        with st.chat_message("user"):
+            st.markdown(user_query)
+        save_message(st.session_state.chat_id, "user", user_query)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                response = rag_answer(user_query, st.session_state.messages, st.session_state.chat_id)
+                st.markdown(response)
+        st.session_state.messages.append({"role": "assistant", "content": response})
+        save_message(st.session_state.chat_id, "assistant", response)
+
 # ---------------- MAIN PANEL ----------------
-# No huge header, just the chat
 if not st.session_state.messages:
-    # Show a welcome screen if empty
     st.markdown("""
-    <div style="text-align: center; margin-top: 20vh; color: #666;">
-        <h1>How can I help you today?</h1>
+    <div class="welcome-container">
+        <h1 class="welcome-title">RAG Chatbot</h1>
+        <p class="welcome-subtitle">Ask me anything or upload a document to get started.</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -241,24 +339,18 @@ if prompt := st.chat_input("Message ChatGPT..."):
     if not st.session_state.chat_id:
         st.session_state.chat_id = create_new_chat()
         
-    # Optimistic UI: Display user message
     with st.chat_message("user"):
         st.markdown(prompt)
     
     st.session_state.messages.append({"role": "user", "content": prompt})
-    
-    # Save user message
     if len(st.session_state.messages) == 1:
          update_chat_title(st.session_state.chat_id, prompt)
     save_message(st.session_state.chat_id, "user", prompt)
 
-    # Generate Response
     with st.chat_message("assistant"):
-        # Placeholder or spinner
         with st.spinner("Thinking..."):
              response = rag_answer(prompt, st.session_state.messages, st.session_state.chat_id)
              st.markdown(response)
 
     st.session_state.messages.append({"role": "assistant", "content": response})
     save_message(st.session_state.chat_id, "assistant", response)
-

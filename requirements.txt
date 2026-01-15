@@ -7,3 +7,4 @@ langchain-google-genai
 python-docx
 pdfplumber
 langchain-text-splitters
+SpeechRecognition
